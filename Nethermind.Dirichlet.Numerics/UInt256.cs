@@ -1,8 +1,11 @@
 ﻿using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
+using System.Net;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Nethermind.Dirichlet.Numerics
@@ -162,7 +165,7 @@ namespace Nethermind.Dirichlet.Numerics
                 throw new FormatException();
             return c;
         }
-        
+
         public static UInt256 Parse(ReadOnlySpan<char> value, NumberStyles numberStyles)
         {
             if (!TryParse(value, numberStyles, CultureInfo.InvariantCulture, out UInt256 c))
@@ -174,7 +177,7 @@ namespace Nethermind.Dirichlet.Numerics
         {
             return TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
         }
-        
+
         public static bool TryParse(ReadOnlySpan<char> value, out UInt256 result)
         {
             return TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
@@ -184,7 +187,7 @@ namespace Nethermind.Dirichlet.Numerics
         {
             return TryParse(value.AsSpan(), style, provider, out result);
         }
-        
+
         public static bool TryParse(ReadOnlySpan<char> value, NumberStyles style, IFormatProvider provider, out UInt256 result)
         {
             BigInteger a;
@@ -197,12 +200,12 @@ namespace Nethermind.Dirichlet.Numerics
                 bigParsedProperly = BigInteger.TryParse(fixedHexValue, style, provider, out a);
             }
             else
-            { 
-                Span<char> fixedHexValue =  stackalloc char[value.Length];
+            {
+                Span<char> fixedHexValue = stackalloc char[value.Length];
                 value.CopyTo(fixedHexValue);
                 bigParsedProperly = BigInteger.TryParse(fixedHexValue, style, provider, out a);
             }
-            
+
             if (!bigParsedProperly)
             {
                 result = Zero;
@@ -245,63 +248,54 @@ namespace Nethermind.Dirichlet.Numerics
 
         public void ToBigEndian(Span<byte> target)
         {
-            if (target.Length == 0)
+            if (target.Length == 32)
             {
-                return;
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(0, 8), s3);
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(8, 8), s2);
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(16, 8), s1);
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(24, 8), s0);
             }
-
-            if (target.Length > 0)
+            else if (target.Length == 20)
             {
-                for (int i = 0; i < 8 && i < target.Length; i++)
-                {
-                    target[target.Length - i - 1] = (byte) (s0 >> (i * 8));
-                }
-            }
-
-            if (target.Length > 8)
-            {
-                for (int i = 0; i < 8 && i < target.Length - 8; i++)
-                {
-                    target[target.Length - i - 9] = (byte) (s1 >> (i * 8));
-                }
-            }
-
-            if (target.Length > 16)
-            {
-                for (int i = 0; i < 8 && i < target.Length - 16; i++)
-                {
-                    target[target.Length - i - 17] = (byte) (s2 >> (i * 8));
-                }
-            }
-
-            if (target.Length > 24)
-            {
-                for (int i = 0; i < 8 && i < target.Length - 24; i++)
-                {
-                    target[32 - i - 25] = (byte) (s3 >> (i * 8));
-                }
+                BinaryPrimitives.WriteUInt32BigEndian(target.Slice(0, 4), (uint)s2);
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(4, 8), s1);
+                BinaryPrimitives.WriteUInt64BigEndian(target.Slice(12, 8), s0);
             }
         }
-
-        private static ulong SwapBytes(ulong x)
+        
+        public void ToLittleEndian(Span<byte> target)
         {
-            // swap adjacent 32-bit blocks
-            x = (x >> 32) | (x << 32);
-            // swap adjacent 16-bit blocks
-            x = ((x & 0xFFFF0000FFFF0000) >> 16) | ((x & 0x0000FFFF0000FFFF) << 16);
-            // swap adjacent 8-bit blocks
-            return ((x & 0xFF00FF00FF00FF00) >> 8) | ((x & 0x00FF00FF00FF00FF) << 8);
+            BinaryPrimitives.WriteUInt64LittleEndian(target.Slice(0, 8), s0);
+            BinaryPrimitives.WriteUInt64LittleEndian(target.Slice(8, 8), s1);
+            BinaryPrimitives.WriteUInt64LittleEndian(target.Slice(16, 8), s2);
+            BinaryPrimitives.WriteUInt64LittleEndian(target.Slice(24, 8), s3);
         }
 
+        public static void CreateFromLittleEndian(out UInt256 c, Span<byte> span)
+        {
+            Span<ulong> ulongs = MemoryMarshal.Cast<byte, ulong>(span);
+            if (ulongs.Length == 4)
+            {
+                c.s0 = ulongs[0];
+                c.s1 = ulongs[1];
+                c.s2 = ulongs[2];
+                c.s3 = ulongs[3];
+            }
+            else
+            {
+                throw new NotSupportedException();
+            }
+        }
+        
         public static void CreateFromBigEndian(out UInt256 c, Span<byte> span)
         {
             Span<ulong> ulongs = MemoryMarshal.Cast<byte, ulong>(span);
             if (ulongs.Length == 4)
             {
-                c.s0 = SwapBytes(ulongs[3]);
-                c.s1 = SwapBytes(ulongs[2]);
-                c.s2 = SwapBytes(ulongs[1]);
-                c.s3 = SwapBytes(ulongs[0]);
+                c.s0 = BinaryPrimitives.ReverseEndianness(ulongs[3]);
+                c.s1 = BinaryPrimitives.ReverseEndianness(ulongs[2]);
+                c.s2 = BinaryPrimitives.ReverseEndianness(ulongs[1]);
+                c.s3 = BinaryPrimitives.ReverseEndianness(ulongs[0]);
             }
             else
             {
@@ -309,7 +303,8 @@ namespace Nethermind.Dirichlet.Numerics
             }
         }
 
-        public static void CreateFromBigEndian2(out UInt256 c, Span<byte> span)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void CreateFromBigEndian2(out UInt256 c, Span<byte> span)
         {
             int byteCount = span.Length;
             int unalignedBytes = byteCount % 8;
@@ -1845,7 +1840,7 @@ namespace Nethermind.Dirichlet.Numerics
         public static uint Remainder(ref UInt256 u, uint v)
         {
             if (u.s1 == 0)
-                return (uint)(u.s0 % v);
+                return (uint) (u.s0 % v);
             throw new NotImplementedException();
 //            if (u.s1 <= uint.MaxValue)
 //                return Remainder96(ref u, v);
